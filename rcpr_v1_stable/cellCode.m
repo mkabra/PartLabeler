@@ -436,3 +436,106 @@ for lr = 1:2
     end
   end
 end
+
+%% Re-projecting 3d points back to 2d image locations
+
+
+calibrationdata = load('/home/mayank/Dropbox/AdamVideos/multiPoint/CameraCalibrationParams20150217.mat');
+J = load('../../data/mouse/Data/multiPoint_All_local.mat');
+movie_file = fullfile(J.expdirs{1},'movie_comb.avi');
+readframe = get_readframe_fcn(movie_file);
+ex_frame = readframe(10);
+sz = size(ex_frame,2);
+expi = 1;
+xL = permute(J.labeledpos_perexp{expi}(1,:,:),[2 3 1]);
+xR = permute(J.labeledpos_perexp{expi}(2,:,:),[2 3 1]);
+xR(:,1) = xR(:,1) - sz/2; % compensate for joint frame.
+[~,~,~,mouseid] = regexp(J.expdirs{expi},'M\d\d\d_');
+mouseid = mouseid{1}(1:end-1);
+mousendx = find(strcmp(calibrationdata.mice,mouseid));
+omcurr = calibrationdata.ompermouse(:,mousendx);
+Tcurr = calibrationdata.Tpermouse(:,mousendx);
+nanpts = isnan(xL(1,:));
+xL = xL(:,~nanpts);
+xR = xR(:,~nanpts);
+[X3d,X3d_right]  = stereo_triangulation(xL,xR,omcurr,Tcurr,calibrationdata.fc_left,...
+  calibrationdata.cc_left,calibrationdata.kc_left,calibrationdata.alpha_c_left,...
+  calibrationdata.fc_right,calibrationdata.cc_right,calibrationdata.kc_right,...
+  calibrationdata.alpha_c_right);
+
+xL_re = project_points(X3d,zeros(3,1),zeros(3,1),calibrationdata.fc_left,...
+  calibrationdata.cc_left,calibrationdata.kc_left);
+
+
+X3d = bsxfun(@minus,X3d,calibrationdata.origin(:,mousendx));
+X3d_right_approx = rodrigues(omcurr)*X3d + repmat(Tcurr,[1 size(X3d,2)]);
+
+%% comparing convergence and error.
+% d2mean and loss2D as in Script_3D
+% High Loss but strong convergence
+
+idx = find(loss2D>80 & d2mean < 15); % loss is high but it has converged.
+f = figure(57);
+isz = size(I.IsTr{1});
+set(f,'Units','pixels');
+set(f,'Position',[0 0 5*size(I.IsTr{1},2)+30 4*size(I.IsTr{1},1)+30]);
+count = 1;
+for imgnum = idx(1:20)'
+  left =  (mod(count-1,4)*1.005)/4;
+  bottom = (4-floor((count-1)/4))/5;
+  subplot('Position',[left bottom 0.25 0.2]); 
+  imshow(I.IsTr{imgnum});
+  hold on; scatter(T2D.phisTr(imgnum,1:2),T2D.phisTr(imgnum,3:4),800,'r.');
+  hold on; scatter(phisPred(imgnum,1:2),phisPred(imgnum,3:4),800,'b.');
+  if count==5,
+    title('Red -- Labeled, Blue -- Predicted');
+  end
+  count = count + 1;
+end
+
+
+%%
+
+idx = find(loss2D>80 & d2mean > 40); % loss is high but it has converged.
+f = figure(58);
+isz = size(I.IsTr{1});
+set(f,'Units','pixels');
+set(f,'Position',[0 0 5*size(I.IsTr{1},2)+30 4*size(I.IsTr{1},1)+30]);
+count = 1;
+for imgnum = idx(1:20)'
+  left =  (mod(count-1,4)*1.005)/4;
+  bottom = (4-floor((count-1)/4))/5;
+  subplot('Position',[left bottom 0.25 0.2]); 
+  imshow(I.IsTr{imgnum});
+  hold on; scatter(T2D.phisTr(imgnum,1:2),T2D.phisTr(imgnum,3:4),800,'r.');
+  hold on; scatter(phisPred(imgnum,1:2),phisPred(imgnum,3:4),800,'b.');
+  if count==5,
+    title('Red -- Labeled, Blue -- Predicted');
+  end
+  count = count + 1;
+end
+
+%% view hog features for detecting arm
+
+nn = randsample(numel(I.IsTr),1); ii = I.IsTr{nn};
+[M,O] = gradientMag(single(ii)/255);
+H = gradientHist(M,O,20,8,1);
+
+nFold = 1;
+s=size(H); s(3)=s(3)/nFold; w0=H; H=zeros(s);
+for o=0:nFold-1, H=H+w0(:,:,(1:s(3))+o*s(3)); end;
+
+% construct a "glyph" for each orientaion
+if(nargin<2 || isempty(w)), w=15; end
+bar=zeros(w,w); bar(:,round(.45*w):round(.55*w))=1;
+bars=zeros([size(bar) s(3)]);
+for o=1:s(3), bars(:,:,o)=imrotate(bar,-(o-1)*180/s(3),'crop'); end
+
+% make pictures of positive weights by adding up weighted glyphs
+H(H<0)=0; V=zeros(w*s(1:2));
+for r=1:s(1), rs=(1:w)+(r-1)*w;
+  for c=1:s(2), cs=(1:w)+(c-1)*w;
+    for o=1:s(3), V(rs,cs)=V(rs,cs)+bars(:,:,o)*H(r,c,o); end
+  end
+end
+figure(39); subplot(2,1,1); imshow(ii); subplot(2,1,2); imshow(V./max(V(:))*2);

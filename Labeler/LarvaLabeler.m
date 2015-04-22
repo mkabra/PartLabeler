@@ -22,7 +22,7 @@ function varargout = LarvaLabeler(varargin)
 
 % Edit the above text to modify the response to help LarvaLabeler
 
-% Last Modified by GUIDE v2.5 16-Aug-2014 09:38:45
+% Last Modified by GUIDE v2.5 22-Apr-2015 18:52:40
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -57,8 +57,8 @@ global LARVALABELERLASTMOVIEPATH;
 handles.output = hObject;
 
 % parse inputs
-[handles.moviefile,handles.template] = myparse(varargin,'moviefile','',...
-  'template',[]);
+[handles.moviefile,handles.template,handles.trxfile] = myparse(varargin,'moviefile','',...
+  'template',[],'trxfile','');
 
 % select video to label
 if isempty(handles.moviefile)
@@ -69,6 +69,24 @@ else
   LARVALABELERLASTMOVIEPATH = fileparts(handles.moviefile);
 end
 
+handles.animal = 1;
+if isempty(handles.trxfile),
+  set(handles.edit_num','Visible','off');
+  set(handles.pushbutton_num','Visible','off');
+  set(handles.text_animal','Visible','off');
+  set(handles.pushbutton_template,'Visible','off');
+  
+  handles.trx = [];
+  handles.nanimals = 1;
+else
+  trx = load(handles.trxfile);
+  handles.trx = trx.trx;
+  set(handles.edit_num,'String',handles.animal);
+  handles.fsizeini = 100;
+  handles.fsize = handles.fsizeini;
+  handles.nanimals = numel(handles.trx);
+  set(handles.text_animal,'String',sprintf('Num animals:%d',handles.nanimals));
+end
 handles.npoints = 0;
 handles.keypressmode = '';
 handles.motionobj = [];
@@ -92,6 +110,7 @@ function handles = SetTemplate(handles)
 uiwait(msgbox('Click to create template points. First, click to create each point. Then you can drag points around. Hit escape when done.'));
 
 handles.hpoly = [];
+handles.htext = [];
 handles.keypressmode = 'settemplate';
 handles.template = nan(0,2);
 
@@ -107,8 +126,9 @@ while true,
     tmp = get(handles.axes_curr,'CurrentPoint');
     x = tmp(1,1);
     y = tmp(1,2);
-    handles.hpoly(end+1) = plot(handles.axes_curr,x,y,'w+','MarkerSize',12);%,...
+    handles.hpoly(end+1) = plot(handles.axes_curr,x,y,'w+','MarkerSize',20,'LineWidth',3);%,...
       %'KeyPressFcn',handles.keypressfcn);
+    handles.htext(end+1) = text(x+handles.dt2p,y,num2str(numel(handles.hpoly)),'Parent',handles.axes_curr);%,...
     handles.template(end+1,:) = [x,y];
   elseif keydown == 1 && double(get(handles.figure,'CurrentCharacter')) == 27,
     break;
@@ -116,13 +136,20 @@ while true,
   
 end
 
+if ~isempty(handles.trx)
+  trxndx = handles.f + 1 - handles.trx(handles.animal).firstframe;
+  handles.templateloc = [handles.trx(handles.animal).x(trxndx) handles.trx(handles.animal).y(trxndx)];
+  handles.templatetheta = handles.trx(handles.animal).theta(trxndx);
+end
+
 handles.npoints = numel(handles.hpoly);
-handles.templatecolors = jet(handles.npoints)*.5+.5;
+handles.templatecolors = jet(handles.npoints);%*.5+.5;
 for i = 1:handles.npoints,
 
   set(handles.hpoly(i),'Color',handles.templatecolors(i,:),...
     'ButtonDownFcn',@(hObject,eventdata) PointButtonDownCallback(hObject,eventdata,handles.figure,i));
   %addNewPositionCallback(handles.hpoly(i),@(pos) UpdateLabels(pos,handles.figure,i));
+  set(handles.htext(i),'Color',handles.templatecolors(i,:));
   
 end
 
@@ -138,7 +165,7 @@ function UpdateLabels(pos,hfig,i,handles)
 if nargin < 4,
   handles = guidata(hfig);
 end
-handles.labeledpos(i,:,handles.f) = pos;
+handles.labeledpos(i,:,handles.f,handles.animal) = pos;
 guidata(hfig,handles);
 
 function handles = InitializeVideo(handles)
@@ -169,25 +196,47 @@ set(handles.axes_curr,'CLim',[handles.minv,handles.maxv],...
 set(handles.axes_prev,'CLim',[handles.minv,handles.maxv],...
   'XLim',[.5,size(handles.imcurr,2)+.5],...
   'YLim',[.5,size(handles.imcurr,1)+.5]);
+zoom(handles.axes_curr,'reset');
+zoom(handles.axes_prev,'reset');
+
+if ~isempty(handles.trx)
+  
+  if handles.f > handles.trx(handles.animal).endframe,
+    warndlg('This animal does not exist for the current frame. Frame location will not be updated');
+  else
+    trxndx = handles.f - handles.trx(handles.animal).firstframe + 1;
+    curlocx = handles.trx(handles.animal).x(trxndx);
+    curlocy = handles.trx(handles.animal).y(trxndx);
+    set(handles.axes_curr,'CLim',[handles.minv,handles.maxv],...
+      'XLim',[curlocx-handles.fsizeini,curlocx+handles.fsizeini],...
+      'YLim',[curlocy-handles.fsizeini,curlocy+handles.fsizeini]);
+    set(handles.axes_prev,'CLim',[handles.minv,handles.maxv],...
+      'XLim',[curlocx-handles.fsizeini,curlocx+handles.fsizeini],...
+      'YLim',[curlocy-handles.fsizeini,curlocy+handles.fsizeini]);
+  end
+    
+end
+
 
 sliderstep = [1/(handles.nframes-1),min(1,100/(handles.nframes-1))];
 set(handles.slider_frame,'Value',0,'SliderStep',sliderstep);
 
 if ~isfield(handles,'labeledpos') || size(handles.labeledpos,3) ~= handles.nframes,
-  handles.labeledpos = nan([handles.npoints,2,handles.nframes]);
+  handles.labeledpos = nan([handles.npoints,2,handles.nframes,handles.nanimals]);
 end
 if ~isfield(handles,'islocked') || numel(handles.islocked) ~= handles.nframes,
-  handles.islocked = false(1,handles.nframes);
+  handles.islocked = false(handles.nframes,handles.nanimals);
 end
 
 function handles = InitializeGUI(handles)
 
-set(handles.figure,'ToolBar','figure');
+% set(handles.figure,'ToolBar','figure');
 
 handles.image_curr = imagesc(0,'Parent',handles.axes_curr);
 axis(handles.axes_curr,'image','off');
 hold(handles.axes_curr,'on');
-colormap(handles.figure,fire_colormap(2^8));
+%colormap(handles.figure,fire_colormap(2^8));
+colormap(handles.figure,gray);
 
 handles.image_prev = imagesc(0,'Parent',handles.axes_prev);
 axis(handles.axes_prev,'image','off');
@@ -203,10 +252,13 @@ set(handles.slider_frame,'Callback','');
 
 handles.hpoly = [];
 handles.pointselected = [];
+handles.htext = [];
+handles.dt2p = 5;
 
 handles.f = 1;
 handles.maxv = inf;
 handles.minv = 0;
+set(handles.output,'Toolbar','figure');
 
 handles = InitializeVideo(handles);
 
@@ -241,6 +293,28 @@ else
 end
 if isfield(handles,'imcurr'),
   set(handles.image_curr,'CData',handles.imcurr);
+  if ~isempty(handles.trx)
+    if handles.f > handles.trx(handles.animal).endframe,
+      warndlg('This animal does not exist for the current frame. Frame location will not be updated');
+    else
+      trxndx = handles.f - handles.trx(handles.animal).firstframe + 1;
+      curlocx = handles.trx(handles.animal).x(trxndx);
+      curlocy = handles.trx(handles.animal).y(trxndx);
+      
+      xsz = get(handles.axes_curr,'XLim');
+      xsz = xsz(2)-xsz(1);
+      ysz = get(handles.axes_curr,'YLim');
+      ysz = ysz(2)-ysz(1);
+      handles.fsize = max([xsz ysz])/2;
+      
+      set(handles.axes_curr,'CLim',[handles.minv,handles.maxv],...
+        'XLim',[curlocx-handles.fsize,curlocx+handles.fsize],...
+        'YLim',[curlocy-handles.fsize,curlocy+handles.fsize]);
+      set(handles.axes_prev,'CLim',[handles.minv,handles.maxv],...
+        'XLim',[curlocx-handles.fsize,curlocx+handles.fsize],...
+        'YLim',[curlocy-handles.fsize,curlocy+handles.fsize]);
+    end
+  end
 end
 if hObject ~= handles.slider_frame,
   set(handles.slider_frame,'Value',(handles.f-1)/(handles.nframes-1));
@@ -249,14 +323,36 @@ if hObject ~= handles.edit_frame,
   set(handles.edit_frame,'String',num2str(handles.f));
 end
 
-for i = 1:handles.npoints,
-  if all(~isnan(handles.labeledpos(i,:,handles.f))),
-    set(handles.hpoly(i),'XData',handles.labeledpos(i,1,handles.f),...
-      'YData',handles.labeledpos(i,2,handles.f));
-  end
+if isempty(handles.labeledpos),
+  fprev = [];
+else
+  fprev = find(~isnan(handles.labeledpos(1,1,1:handles.f,handles.animal)),1,'last');
 end
 
-if handles.islocked(handles.f),
+for i = 1:handles.npoints,
+  
+  if numel(handles.hpoly) < i || ~ishandle(handles.hpoly(i)),
+    handles.hpoly(i) = plot(handles.axes_curr,nan,nan,'w+','MarkerSize',20,'LineWidth',3);
+    set(handles.hpoly(i),'Color',handles.templatecolors(i,:),...
+      'ButtonDownFcn',@(hObject,eventdata) PointButtonDownCallback(hObject,eventdata,handles.figure,i));
+    handles.htext(i) = text(nan,nan,num2str(i),'Parent',handles.axes_curr,...
+       'Color',handles.templatecolors);
+  end
+  
+  %if all(~isnan(handles.labeledpos(i,:,handles.f,handles.animal))),
+  if ~isempty(fprev),
+    set(handles.hpoly(i),'XData',handles.labeledpos(i,1,fprev,handles.animal),...
+      'YData',handles.labeledpos(i,2,fprev,handles.animal),'Visible','on');
+
+    tpos = [handles.labeledpos(i,1,fprev,handles.animal)+handles.dt2p;...
+      handles.labeledpos(i,2,fprev,handles.animal)];
+    set(handles.htext(i),'Position',tpos,'Visible','on');
+    
+  end
+
+end
+
+if handles.islocked(handles.f,handles.animal),
 
   set(handles.togglebutton_lock,'BackgroundColor',[.6,0,0],...
     'String','Locked','Value',1);
@@ -270,8 +366,12 @@ end
 
 if handles.f > 1,
   for i = 1:handles.npoints,
-    set(handles.posprev(i),'XData',handles.labeledpos(i,1,handles.f-1),...
-      'YData',handles.labeledpos(i,2,handles.f-1));
+    
+    if numel(handles.posprev) < i || ~ishandle(handles.posprev(i)),
+      handles.posprev(i) = plot(handles.axes_prev,nan,nan,'+','Color',handles.templatecolors(i,:),'MarkerSize',8);
+    end
+    set(handles.posprev(i),'XData',handles.labeledpos(i,1,handles.f-1,handles.animal),...
+      'YData',handles.labeledpos(i,2,handles.f-1,handles.animal));
   end
 else
   set(handles.posprev,'XData',nan,'YData',nan);
@@ -345,6 +445,8 @@ savedata.npoints = handles.npoints;
 savedata.f = handles.f;
 savedata.minv = handles.minv;
 savedata.maxv = handles.maxv;
+savedata.templateloc = handles.templateloc;
+savedata.templatetheta = handles.templatetheta;
 
 if ~isfield(handles,'savefile'),
   handles.savefile = '';
@@ -394,6 +496,7 @@ if ~isempty(handles.template),
   for i = 1:handles.npoints,
     try %#ok<TRYNC>
       delete(handles.hpoly(i));
+      delete(handles.htext(i));
     end
   end
   
@@ -404,9 +507,9 @@ end
 
 handles = SetTemplate(handles);
 
-handles.labeledpos = nan([handles.npoints,2,handles.nframes]);
-handles.labeledpos(:,:,handles.f) = handles.template;
-handles.islocked = false(1,handles.nframes);
+handles.labeledpos = nan([handles.npoints,2,handles.nframes,handles.nanimals]);
+handles.labeledpos(:,:,handles.f,handles.animal) = handles.template;
+handles.islocked = false(handles.nframes,handles.nanimals);
 handles.pointselected = false(1,handles.npoints);
 
 delete(handles.posprev(ishandle(handles.posprev)));
@@ -448,14 +551,13 @@ function togglebutton_lock_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 
-handles.islocked(handles.f) = get(hObject,'Value');
-if handles.islocked(handles.f),
-  handles.labeledpos(:,1,handles.f) = cell2mat(get(handles.hpoly,'XData'));
-  handles.labeledpos(:,2,handles.f) = cell2mat(get(handles.hpoly,'YData'));
-else
+handles.islocked(handles.f,handles.animal) = get(hObject,'Value');
+if handles.islocked(handles.f,handles.animal),
+  handles.labeledpos(:,1,handles.f,handles.animal) = cell2mat(get(handles.hpoly,'XData'));
+  handles.labeledpos(:,2,handles.f,handles.animal) = cell2mat(get(handles.hpoly,'YData'));
 end
   
-if handles.islocked(handles.f),
+if handles.islocked(handles.f,handles.animal),
   set(hObject,'BackgroundColor',[.6,0,0],'String','Locked');
 else
   set(hObject,'BackgroundColor',[0,.6,0],'String','Unlocked');
@@ -486,38 +588,32 @@ end
 
 delete(handles.figure);
 
-
-% --------------------------------------------------------------------
-function menu_file_load_Callback(hObject, eventdata, handles)
-% hObject    handle to menu_file_load (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-res = questdlg('Save before closing current video?');
-if strcmpi(res,'Cancel'),
-  return;
-elseif strcmpi(res,'Yes'),
-  handles = SaveState(handles);
-end
+function handles = LoadLabels(handles,filename)
 
 global LARVALABELERSAVEFILE;
-if isempty(LARVALABELERSAVEFILE),
-  defaultfile = '';
-else
-  defaultfile = LARVALABELERSAVEFILE;
+
+if nargin < 2 || isempty(filename),
+  
+  if isempty(LARVALABELERSAVEFILE),
+    defaultfile = '';
+  else
+    defaultfile = LARVALABELERSAVEFILE;
+  end
+  [f,p] = uigetfile('*.mat','Load file...',defaultfile);
+  if ~ischar(f),
+    return;
+  end
+  filename = fullfile(p,f);
 end
-[f,p] = uigetfile('*.mat','Load file...',defaultfile);
-if ~ischar(f),
-  return;
-end
-handles.savefile = fullfile(p,f);
-if ~exist(handles.savefile,'file'),
-  warndlg(sprintf('File %s does not exist',handles.savefile),'File does not exist','modal');
+
+if ~exist(filename,'file'),
+  warndlg(sprintf('File %s does not exist',filename),'File does not exist','modal');
   return;
 end
 
-LARVALABELERSAVEFILE = handles.savefile;
+LARVALABELERSAVEFILE = filename;
 
+handles.savefile = filename;
 savedata = load(handles.savefile);
 fns = fieldnames(savedata);
 olddata = struct;
@@ -537,6 +633,21 @@ handles.fprev_im = nan;
 handles.templatecolors = jet(handles.npoints)*.5+.5;
 
 handles = UpdateFrame(handles);
+
+% --------------------------------------------------------------------
+function menu_file_load_Callback(hObject, eventdata, handles)
+% hObject    handle to menu_file_load (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+res = questdlg('Save before closing current video?');
+if strcmpi(res,'Cancel'),
+  return;
+elseif strcmpi(res,'Yes'),
+  handles = SaveState(handles);
+end
+
+handles = LoadLabels(handles);
 
 guidata(hObject,handles);
 
@@ -573,7 +684,7 @@ handles.maxv = inf;
 handles = InitializeVideo(handles);
 handles.f_im = nan;
 handles.fprev_im = nan;
-handles.templatecolors = jet(handles.npoints)*.5+.5;
+handles.templatecolors = jet(handles.npoints);
 
 handles = UpdateFrame(handles);
 
@@ -645,15 +756,18 @@ switch eventdata.Key,
     if any(handles.pointselected),
       xlim = get(handles.axes_curr,'XLim');
       dx = diff(xlim);
-      if ismember('control',eventdata.Modifier),
+      if ismember('shift',eventdata.Modifier),
         dx = dx / 50;
       else
         dx = dx / 500;
       end
       for i = find(handles.pointselected),
         x = get(handles.hpoly(i),'XData');
-        handles.labeledpos(i,1,handles.f) = x + dx;
-        set(handles.hpoly(i),'XData',handles.labeledpos(i,1,handles.f));
+        handles.labeledpos(i,1,handles.f,handles.animal) = x + dx;
+        set(handles.hpoly(i),'XData',handles.labeledpos(i,1,handles.f,handles.animal));
+        tpos = get(handles.htext(i),'Position');
+        tpos(1) = handles.labeledpos(i,1,handles.f,handles.animal)+handles.dt2p;
+        set(handles.htext(i),'Position',tpos);
         guidata(hObject,handles);
       end
     else
@@ -697,15 +811,19 @@ switch eventdata.Key,
     if any(handles.pointselected),
       xlim = get(handles.axes_curr,'XLim');
       dx = diff(xlim);
-      if ismember('control',eventdata.Modifier),
+      if ismember('shift',eventdata.Modifier),
         dx = dx / 50;
       else
         dx = dx / 500;
       end
       for i = find(handles.pointselected),
         x = get(handles.hpoly(i),'XData');
-        handles.labeledpos(i,1,handles.f) = x - dx;
-        set(handles.hpoly(i),'XData',handles.labeledpos(i,1,handles.f));
+        handles.labeledpos(i,1,handles.f,handles.animal) = x - dx;
+        set(handles.hpoly(i),'XData',handles.labeledpos(i,1,handles.f,handles.animal));
+        tpos = get(handles.htext(i),'Position');
+        tpos(1) = handles.labeledpos(i,1,handles.f,handles.animal)+handles.dt2p;
+        set(handles.htext(i),'Position',tpos);
+
         guidata(hObject,handles);
       end
     else
@@ -725,15 +843,19 @@ switch eventdata.Key,
     if any(handles.pointselected),
       ylim = get(handles.axes_curr,'YLim');
       dy = diff(ylim);
-      if ismember('control',eventdata.Modifier),
+      if ismember('shift',eventdata.Modifier),
         dy = dy / 50;
       else
         dy = dy / 500;
       end
       for i = find(handles.pointselected),
         y = get(handles.hpoly(i),'YData');
-        handles.labeledpos(i,2,handles.f) = y - dy;
-        set(handles.hpoly(i),'YData',handles.labeledpos(i,2,handles.f));
+        handles.labeledpos(i,2,handles.f,handles.animal) = y - dy;
+        set(handles.hpoly(i),'YData',handles.labeledpos(i,2,handles.f,handles.animal));
+        tpos = get(handles.htext(i),'Position');
+        tpos(2) = handles.labeledpos(i,2,handles.f,handles.animal);
+        set(handles.htext(i),'Position',tpos);
+
         guidata(hObject,handles);
       end
     end
@@ -741,21 +863,98 @@ switch eventdata.Key,
     if any(handles.pointselected),
       ylim = get(handles.axes_curr,'YLim');
       dy = diff(ylim);
-      if ismember('control',eventdata.Modifier),
+      if ismember('shift',eventdata.Modifier),
         dy = dy / 50;
       else
         dy = dy / 500;
       end
       for i = find(handles.pointselected),
         y = get(handles.hpoly(i),'YData');
-        handles.labeledpos(i,2,handles.f) = y + dy;
-        set(handles.hpoly(i),'YData',handles.labeledpos(i,2,handles.f));
+        handles.labeledpos(i,2,handles.f,handles.animal) = y + dy;
+        set(handles.hpoly(i),'YData',handles.labeledpos(i,2,handles.f,handles.animal));
+        tpos = get(handles.htext(i),'Position');
+        tpos(2) = handles.labeledpos(i,2,handles.f,handles.animal);
+        set(handles.htext(i),'Position',tpos);
+
         guidata(hObject,handles);
       end
     end
   case 'l'
     set(handles.togglebutton_lock,'Value',~get(handles.togglebutton_lock,'Value'));
     togglebutton_lock_Callback(handles.togglebutton_lock,[],handles);
+  case 'r'
+    pushbutton_template_Callback(hObject,eventdata,handles);
+  case '1'
+    if numel(handles.pointselected)<1, return; end
+    inval = handles.pointselected(1);
+    handles.pointselected(:) = false;
+    handles.pointselected(1) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '2'
+    if numel(handles.pointselected)<2, return; end
+    inval = handles.pointselected(2);
+    handles.pointselected(:) = false;
+    handles.pointselected(2) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '3'
+    if numel(handles.pointselected)<3, return; end
+    inval = handles.pointselected(3);
+    handles.pointselected(:) = false;
+    handles.pointselected(3) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '4'
+    if numel(handles.pointselected)<4, return; end
+    inval = handles.pointselected(4);
+    handles.pointselected(:) = false;
+    handles.pointselected(4) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '5'
+    if numel(handles.pointselected)<5, return; end
+    inval = handles.pointselected(5);
+    handles.pointselected(:) = false;
+    handles.pointselected(5) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '6'
+    if numel(handles.pointselected)<6, return; end
+    inval = handles.pointselected(6);
+    handles.pointselected(:) = false;
+    handles.pointselected(6) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '7'
+    if numel(handles.pointselected)<7, return; end
+    inval = handles.pointselected(7);
+    handles.pointselected(:) = false;
+    handles.pointselected(7) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '8'
+    if numel(handles.pointselected)<8, return; end
+    inval = handles.pointselected(8);
+    handles.pointselected(:) = false;
+    handles.pointselected(8) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '9'
+    if numel(handles.pointselected)<9, return; end
+    inval = handles.pointselected(9);
+    handles.pointselected(:) = false;
+    handles.pointselected(9) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+  case '0'
+    if numel(handles.pointselected)<10, return; end
+    inval = handles.pointselected(10);
+    handles.pointselected(:) = false;
+    handles.pointselected(10) = ~inval;
+    UpdatePointSelected(handles);    
+    guidata(hObject,handles);
+
 end
 
 
@@ -772,6 +971,8 @@ if isnumeric(handles.motionobj),
   tmp = get(handles.axes_curr,'CurrentPoint');
   pos = tmp(1,1:2);
   set(handles.hpoly(handles.motionobj),'XData',pos(1),'YData',pos(2));
+  pos(1) = pos(1) + handles.dt2p;
+  set(handles.htext(handles.motionobj),'Position',pos);
   UpdateLabels(pos,hObject,handles.motionobj,handles);
 end
 
@@ -793,14 +994,32 @@ if ~isempty(handles.motionobj) && isnumeric(handles.motionobj),
   guidata(hObject,handles);
 end
 
-function UpdatePointSelected(handles,i)
-
-if handles.pointselected(i),
-  set(handles.hpoly(i),'LineWidth',2,'Marker','o');
-else
-  set(handles.hpoly(i),'LineWidth',1,'Marker','+');
+if any(handles.pointselected)
+  assert(numel(find(handles.pointselected))==1,'More than one point cannot be selected');
+  tmp = get(handles.axes_curr,'CurrentPoint');
+  pos = tmp(1,1:2);
+  set(handles.hpoly(handles.pointselected),'XData',pos(1),'YData',pos(2));
+  set(handles.htext(handles.pointselected),'Position',[pos(1)+handles.dt2p pos(2)]);
+  UpdateLabels(pos,hObject,find(handles.pointselected),handles);
+  handles.pointselected(:) = false;
+  guidata(hObject,handles)
+  UpdatePointSelected(handles);
 end
 
+function UpdatePointSelected(handles,i)
+if nargin<2,
+  i = 1:numel(handles.pointselected);
+end
+
+for ndx = 1:numel(i)
+  if handles.pointselected(i(ndx)),
+    set(handles.hpoly(i(ndx)),'LineWidth',3,'Marker','x');
+%     set(handles.htext(i(ndx)),'LineWidth',3,'Visible','off');
+  else
+    set(handles.hpoly(i(ndx)),'LineWidth',3,'Marker','+','Visible','on');
+    set(handles.htext(i(ndx)),'Visible','on');
+  end
+end
 
 % --------------------------------------------------------------------
 function menu_help_Callback(hObject, eventdata, handles)
@@ -825,3 +1044,139 @@ s{end+1} = '* CTRL+MINUS and CTRL+EQUAL decrease and increase the frame shown by
 s{end+1} = '* L toggles the lock state for the current frame.';
 
 msgbox(s,'Keyboard shortcuts','help','modal');
+
+
+
+function edit_num_Callback(hObject, eventdata, handles)
+% hObject    handle to edit_num (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: get(hObject,'String') returns contents of edit_num as text
+%        str2double(get(hObject,'String')) returns contents of edit_num as a double
+
+% --- Executes during object creation, after setting all properties.
+function edit_num_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to edit_num (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+% --- Executes on button press in pushbutton_num.
+function pushbutton_num_Callback(hObject, eventdata, handles)
+% hObject    handle to pushbutton_num (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+animal = str2double(get(handles.edit_num,'String'));
+if animal > numel(handles.trx)
+  warndlg('This animal does not exist');
+  set(handles.edit_num,'String',num2str(handles.animal));
+  return;
+end
+if handles.f < handles.trx(animal).firstframe || handles.f > handles.trx(animal).endframe,
+  warndlg('This animal does not exist for the frame num%d',handles.f);
+  set(handles.edit_num,'String',num2str(handles.animal));
+  return;
+end  
+handles.animal = animal;
+handles = UpdateFrame(handles,hObject);
+guidata(hObject,handles); 
+
+
+% --- Executes on button press in pushbutton_template.
+function pushbutton_template_Callback(hObject, eventdata, handles)
+% hObject    handle to pushbutton_template (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+trxndx = handles.f - handles.trx(handles.animal).firstframe+1;
+curlocx = handles.trx(handles.animal).x(trxndx);
+curlocy = handles.trx(handles.animal).y(trxndx);
+dtheta = handles.trx(handles.animal).theta(trxndx)-handles.templatetheta;
+rotmat = [cos(dtheta) -sin(dtheta); sin(dtheta) cos(dtheta)];
+for i =1 :numel(handles.hpoly)
+  dx = handles.template(i,1) - handles.templateloc(1);
+  dy = handles.template(i,2) - handles.templateloc(2);
+  rot = rotmat*[dx;dy];
+  handles.labeledpos(i,1,handles.f,handles.animal) = curlocx + rot(1);
+  handles.labeledpos(i,2,handles.f,handles.animal) = curlocy + rot(2);
+  set(handles.hpoly(i),'XData',handles.labeledpos(i,1,handles.f,handles.animal),...
+    'YData',handles.labeledpos(i,2,handles.f,handles.animal));
+  tpos = [handles.labeledpos(i,1,handles.f,handles.animal)+handles.dt2p;...
+          handles.labeledpos(i,2,handles.f,handles.animal)];
+  set(handles.htext(i),'Position',tpos);
+
+end
+guidata(hObject,handles);
+
+
+% --------------------------------------------------------------------
+function import_template_Callback(hObject, eventdata, handles)
+% hObject    handle to import_template (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+global LARVALABELERSAVEFILE;
+
+if isempty(LARVALABELERSAVEFILE),
+  defaultfile = '';
+else
+  defaultfile = LARVALABELERSAVEFILE;
+end
+
+[f,p] = uigetfile('*.mat','Import template from...',defaultfile);
+if ~ischar(f),
+  return;
+end
+filename = fullfile(p,f);
+
+if ~exist(filename,'file'),
+  warndlg(sprintf('File %s does not exist',filename),'File does not exist','modal');
+  return;
+end
+
+L = load(filename);
+assert(isfield(L,'template'),'The file does not have any template');
+
+handles.template = L.template;
+handles.npoints = size(handles.template,1);
+handles.templatecolors = jet(handles.npoints);%*.5+.5;
+
+for ndx = 1:size(L.template,1)
+  x = L.template(ndx,1);
+  y = L.template(ndx,2);
+  handles.hpoly(ndx) = plot(handles.axes_curr,x,y,'w+','MarkerSize',20,'LineWidth',3);
+  handles.htext(ndx) = text(x+handles.dt2p,y,num2str(numel(handles.hpoly)),'Parent',handles.axes_curr);%,...
+  set(handles.hpoly(ndx),'Color',handles.templatecolors(ndx,:),...
+    'ButtonDownFcn',@(hObject,eventdata) PointButtonDownCallback(hObject,eventdata,handles.figure,ndx));
+  %addNewPositionCallback(handles.hpoly(i),@(pos) UpdateLabels(pos,handles.figure,i));
+  set(handles.htext(ndx),'Color',handles.templatecolors(ndx,:));
+
+end
+ 
+handles.labeledpos = nan([handles.npoints,2,handles.nframes,handles.nanimals]);
+handles.labeledpos(:,:,handles.f,handles.animal) = handles.template;
+handles.islocked = false(handles.nframes,handles.nanimals);
+handles.pointselected = false(1,handles.npoints);
+
+delete(handles.posprev(ishandle(handles.posprev)));
+handles.posprev = nan(1,handles.npoints);
+for i = 1:handles.npoints,
+  handles.posprev(i) = plot(handles.axes_prev,nan,nan,'+','Color',handles.templatecolors(i,:),'MarkerSize',8);%,...
+    %'KeyPressFcn',handles.keypressfcn);
+end
+
+if isfield(L,'templateloc')
+  handles.templateloc = L.templateloc;
+  handles.templatetheta = L.templatetheta;
+  guidata(hObject,handles);
+  pushbutton_template_Callback(hObject,eventdata,handles);
+else
+  guidata(hObject,handles);
+end
+
