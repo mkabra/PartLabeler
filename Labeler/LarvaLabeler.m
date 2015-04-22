@@ -380,7 +380,7 @@ else
   set(handles.posprev,'XData',nan,'YData',nan);
 end
 
-if ~isempty(handles.trx),
+if ~isempty(handles.trx) && ~isempty(handles.template),
   pushbutton_template_Callback(hObject,[],handles);
 end
   
