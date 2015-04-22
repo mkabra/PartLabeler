@@ -376,6 +376,10 @@ if handles.f > 1,
 else
   set(handles.posprev,'XData',nan,'YData',nan);
 end
+
+if ~isempty(handles.trx),
+  pushbutton_template_Callback(hObject,[],handles);
+end
   
 
 
