@@ -169,7 +169,9 @@ handles.labeledpos(i,:,handles.f,handles.animal) = pos;
 guidata(hfig,handles);
 
 function handles = InitializeVideo(handles)
-
+if ~isempty(handles.trx)
+    handles.f = min([handles.trx.firstframe]);
+end
 % open video
 [handles.readframe,handles.nframes,handles.fid,handles.headerinfo] = ...
   get_readframe_fcn(handles.moviefile);
@@ -200,7 +202,7 @@ zoom(handles.axes_curr,'reset');
 zoom(handles.axes_prev,'reset');
 
 if ~isempty(handles.trx)
-  
+    
   if handles.f > handles.trx(handles.animal).endframe,
     warndlg('This animal does not exist for the current frame. Frame location will not be updated');
   else
@@ -294,7 +296,7 @@ end
 if isfield(handles,'imcurr'),
   set(handles.image_curr,'CData',handles.imcurr);
   if ~isempty(handles.trx)
-    if handles.f > handles.trx(handles.animal).endframe,
+    if handles.f > handles.trx(handles.animal).endframe || handles.f < handles.trx(handles.animal).firstframe ,
       warndlg('This animal does not exist for the current frame. Frame location will not be updated');
     else
       trxndx = handles.f - handles.trx(handles.animal).firstframe + 1;
@@ -363,6 +365,7 @@ else
     'String','Unlocked','Value',0);
   
 end
+SetButtonImage(handles.togglebutton_lock);
 
 if handles.f > 1,
   for i = 1:handles.npoints,
